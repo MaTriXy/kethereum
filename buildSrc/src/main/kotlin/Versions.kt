@@ -1,0 +1,15 @@
+object Versions {
+    const val kotlin = "1.6.10"
+    const val versions_plugin = "0.40.0"
+    const val jupiter = "5.8.2"
+    const val moshi = "1.13.0"
+    const val khex = "1.1.2"
+    const val khash = "1.1.1"
+    const val slf4j = "1.7.32"
+    const val klaxon = "5.5"
+    const val okhttp = "4.9.3"
+    const val coroutines = "1.6.0"
+    const val threetenbp = "1.5.2"
+    const val okio = "3.0.0"
+    const val base58 = "0.4"
+}

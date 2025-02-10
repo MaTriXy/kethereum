@@ -1,10 +1,9 @@
 package org.kethereum.keccakshortcut
 
-import org.spongycastle.jcajce.provider.digest.Keccak
-import org.walleth.khex.hexToByteArray
+import org.komputing.khash.keccak.Keccak
+import org.komputing.khash.keccak.KeccakParameter
+import org.komputing.khex.extensions.hexToByteArray
+import org.komputing.khex.model.HexString
 
-fun String.keccak() = hexToByteArray().keccak()
-fun ByteArray.keccak() = Keccak.Digest256().let {
-    it.update(this)
-    it.digest()
-}
+fun HexString.keccak() = hexToByteArray().keccak()
+fun ByteArray.keccak() = Keccak.digest(this, KeccakParameter.KECCAK_256)

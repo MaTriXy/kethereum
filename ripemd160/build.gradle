@@ -1,3 +1,0 @@
-dependencies {
-    testImplementation "com.github.walleth:khex:$khex_version"
-}

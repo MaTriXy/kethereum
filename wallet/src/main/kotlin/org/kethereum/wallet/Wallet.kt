@@ -1,23 +1,23 @@
 package org.kethereum.wallet
 
-import org.kethereum.crypto.ECKeyPair
-import org.kethereum.crypto.PRIVATE_KEY_SIZE
+import org.kethereum.crypto.CryptoAPI
+import org.kethereum.crypto.CryptoAPI.aesCipher
 import org.kethereum.crypto.SecureRandomUtils.secureRandom
-import org.kethereum.crypto.getAddress
+import org.kethereum.crypto.api.cipher.AESCipher
+import org.kethereum.crypto.impl.hashing.DigestParams
+import org.kethereum.crypto.toAddress
+import org.kethereum.crypto.toECKeyPair
 import org.kethereum.extensions.toBytesPadded
 import org.kethereum.keccakshortcut.keccak
+import org.kethereum.model.ECKeyPair
+import org.kethereum.model.PRIVATE_KEY_SIZE
+import org.kethereum.model.PrivateKey
 import org.kethereum.wallet.model.*
-import org.spongycastle.crypto.digests.SHA256Digest
-import org.spongycastle.crypto.generators.PKCS5S2ParametersGenerator
-import org.spongycastle.crypto.generators.SCrypt
-import org.spongycastle.crypto.params.KeyParameter
-import org.walleth.khex.hexToByteArray
-import org.walleth.khex.toNoPrefixHexString
+import org.komputing.khex.extensions.hexToByteArray
+import org.komputing.khex.extensions.toNoPrefixHexString
+import org.komputing.khex.model.HexString
 import java.nio.charset.Charset
 import java.util.*
-import javax.crypto.Cipher
-import javax.crypto.spec.IvParameterSpec
-import javax.crypto.spec.SecretKeySpec
 
 private val UTF_8 = Charset.forName("UTF-8")
 
@@ -27,8 +27,6 @@ private const val DKLEN = 32
 private const val CURRENT_VERSION = 3
 
 private const val CIPHER = "aes-128-ctr"
-
-class ScryptConfig(val n: Int, val p: Int)
 
 val LIGHT_SCRYPT_CONFIG = ScryptConfig(1 shl 12, 6)
 val STANDARD_SCRYPT_CONFIG = ScryptConfig(1 shl 18, 1)
@@ -42,12 +40,12 @@ fun ECKeyPair.createWallet(password: String, config: ScryptConfig): Wallet {
         salt = mySalt.toNoPrefixHexString()
     })
 
-    val encryptKey = Arrays.copyOfRange(derivedKey, 0, 16)
+    val encryptKey = derivedKey.copyOfRange(0, 16)
     val iv = generateRandomBytes(16)
 
-    val privateKeyBytes = privateKey.toBytesPadded(PRIVATE_KEY_SIZE)
+    val privateKeyBytes = privateKey.key.toBytesPadded(PRIVATE_KEY_SIZE)
 
-    val cipherText = performCipherOperation(Cipher.ENCRYPT_MODE, iv, encryptKey, privateKeyBytes)
+    val cipherText = performCipherOperation(AESCipher.Operation.ENCRYPTION, iv, encryptKey, privateKeyBytes)
 
     val mac = generateMac(derivedKey, cipherText)
 
@@ -61,7 +59,7 @@ fun ECKeyPair.createWallet(password: String, config: ScryptConfig): Wallet {
 private fun createWallet(ecKeyPair: ECKeyPair,
                          cipherText: ByteArray,
                          iv: ByteArray, mac: ByteArray, scryptKdfParams: ScryptKdfParams) = Wallet(
-        address = ecKeyPair.getAddress(),
+        address = ecKeyPair.toAddress().cleanHex,
 
         crypto = WalletCrypto(
                 cipher = CIPHER,
@@ -76,7 +74,8 @@ private fun createWallet(ecKeyPair: ECKeyPair,
         version = CURRENT_VERSION
 )
 
-private fun generateDerivedScryptKey(password: ByteArray, kdfParams: ScryptKdfParams) = SCrypt.generate(password, kdfParams.salt?.hexToByteArray(), kdfParams.n, kdfParams.r, kdfParams.p, kdfParams.dklen)
+private fun generateDerivedScryptKey(password: ByteArray, kdfParams: ScryptKdfParams) =
+        CryptoAPI.scrypt.derive(password, kdfParams.salt?.let { HexString(it) }?.hexToByteArray(), kdfParams.n, kdfParams.r, kdfParams.p, kdfParams.dklen)
 
 @Throws(CipherException::class)
 private fun generateAes128CtrDerivedKey(password: ByteArray, kdfParams: Aes128CtrKdfParams): ByteArray {
@@ -88,19 +87,12 @@ private fun generateAes128CtrDerivedKey(password: ByteArray, kdfParams: Aes128Ct
     // Java 8 supports this, but you have to convert the password to a character array, see
     // http://stackoverflow.com/a/27928435/3211687
 
-    val gen = PKCS5S2ParametersGenerator(SHA256Digest())
-    gen.init(password, kdfParams.salt?.hexToByteArray(), kdfParams.c)
-    return (gen.generateDerivedParameters(256) as KeyParameter).key
+    return CryptoAPI.pbkdf2.derive(password, kdfParams.salt?.let { HexString(it) }?.hexToByteArray(), kdfParams.c, DigestParams.Sha256)
 }
 
 @Throws(CipherException::class)
-private fun performCipherOperation(mode: Int, iv: ByteArray, encryptKey: ByteArray, text: ByteArray) = try {
-    val ivParameterSpec = IvParameterSpec(iv)
-    val cipher = Cipher.getInstance("AES/CTR/NoPadding")
-
-    val secretKeySpec = SecretKeySpec(encryptKey, "AES")
-    cipher.init(mode, secretKeySpec, ivParameterSpec)
-    cipher.doFinal(text)
+private fun performCipherOperation(operation: AESCipher.Operation, iv: ByteArray, encryptKey: ByteArray, text: ByteArray) = try {
+    aesCipher.init(AESCipher.Mode.CTR, AESCipher.Padding.NO, operation, encryptKey, iv).performOperation(text)
 } catch (e: Exception) {
     throw CipherException("Error performing cipher operation", e)
 }
@@ -109,8 +101,8 @@ private fun performCipherOperation(mode: Int, iv: ByteArray, encryptKey: ByteArr
 private fun generateMac(derivedKey: ByteArray, cipherText: ByteArray): ByteArray {
     val result = ByteArray(16 + cipherText.size)
 
-    System.arraycopy(derivedKey, 16, result, 0, 16)
-    System.arraycopy(cipherText, 0, result, 16, cipherText.size)
+    derivedKey.copyInto(result, startIndex = 16)
+    cipherText.copyInto(result, destinationOffset = 16)
 
     return result.keccak()
 }
@@ -120,25 +112,24 @@ fun Wallet.decrypt(password: String): ECKeyPair {
 
     validate()
 
-    val mac = crypto.mac.hexToByteArray()
-    val iv = crypto.cipherparams.iv.hexToByteArray()
-    val cipherText = crypto.ciphertext.hexToByteArray()
+    val mac = HexString(crypto.mac).hexToByteArray()
+    val iv = HexString(crypto.cipherparams.iv).hexToByteArray()
+    val cipherText = HexString(crypto.ciphertext).hexToByteArray()
 
-    val kdfparams = crypto.kdfparams
-    val derivedKey = when (kdfparams) {
-        is ScryptKdfParams -> generateDerivedScryptKey(password.toByteArray(UTF_8), kdfparams)
-        is Aes128CtrKdfParams -> generateAes128CtrDerivedKey(password.toByteArray(UTF_8), kdfparams)
+    val derivedKey = when (val kdfParams = crypto.kdfparams) {
+        is ScryptKdfParams -> generateDerivedScryptKey(password.toByteArray(UTF_8), kdfParams)
+        is Aes128CtrKdfParams -> generateAes128CtrDerivedKey(password.toByteArray(UTF_8), kdfParams)
     }
 
     val derivedMac = generateMac(derivedKey, cipherText)
 
-    if (!Arrays.equals(derivedMac, mac)) {
-        throw CipherException("Invalid password provided")
+    if (!derivedMac.contentEquals(mac)) {
+        throw InvalidPasswordException()
     }
 
-    val encryptKey = Arrays.copyOfRange(derivedKey, 0, 16)
-    val privateKey = performCipherOperation(Cipher.DECRYPT_MODE, iv, encryptKey, cipherText)
-    return ECKeyPair.create(privateKey)
+    val encryptKey = derivedKey.copyOfRange(0, 16)
+    val privateKey = PrivateKey(performCipherOperation(AESCipher.Operation.DESCRYPTION, iv, encryptKey, cipherText))
+    return privateKey.toECKeyPair()
 }
 
 @Throws(CipherException::class)
@@ -152,27 +143,22 @@ fun Wallet.validate() {
 
         crypto.kdf != AES_128_CTR && crypto.kdf != SCRYPT
         -> throw CipherException("KDF type is not supported")
+
+        (crypto.kdf == AES_128_CTR && crypto.kdfparams !is Aes128CtrKdfParams)
+                || (crypto.kdf == SCRYPT && crypto.kdfparams !is ScryptKdfParams)
+        -> throw CipherException("KDFParams invalid")
     }
 }
 
 
-fun generateRandomBytes(size: Int) = ByteArray(size).apply {
+internal fun generateRandomBytes(size: Int) = ByteArray(size).apply {
     secureRandom().nextBytes(this)
 }
 
+internal fun WalletForImport.getCrypto() = crypto ?: cryptoFromMEW
 
-fun WalletCryptoForImport.toTypedKdfParamsWalletCrypto() = WalletCrypto(cipher = cipher,
-        ciphertext = ciphertext,
-        cipherparams = cipherparams,
-        kdf = kdf,
-        kdfparams = getTypedKdfParams(),
-        mac = mac)
-
-
-fun WalletForImport.getCrypto() = crypto ?: cryptoFromMEW
-
-fun WalletForImport.toTypedWallet() = Wallet(
+internal fun WalletForImport.toTypedWallet() = Wallet(
         address = address,
-        crypto = getCrypto()?.toTypedKdfParamsWalletCrypto()!!,
+        crypto = getCrypto()!!,
         id = id!!,
         version = version)

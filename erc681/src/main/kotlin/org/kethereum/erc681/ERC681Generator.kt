@@ -10,8 +10,8 @@ fun ERC681.generateURL(): String {
         res += address
     }
 
-    if (chainId != null && chainId != 1L) {
-        res += "@$chainId"
+    chainId?.let {
+        res += "@${it.value}"
     }
 
     if (function != null) {
@@ -22,9 +22,14 @@ fun ERC681.generateURL(): String {
 
     paramList.addAll(functionParams)
 
-    if (gas != null) {
-        paramList.add("gas" to gas.toString())
+    if (gasLimit != null) {
+        paramList.add("gas" to gasLimit.toString())
     }
+
+    if (gasPrice != null) {
+        paramList.add("gasPrice" to gasLimit.toString())
+    }
+
     if (value != null) {
         paramList.add("value" to value.toString())
     }

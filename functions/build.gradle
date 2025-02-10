@@ -1,9 +1,0 @@
-dependencies {
-    implementation project(':model')
-    implementation project(':rlp')
-    implementation project(":keccak_shortcut")
-
-    implementation "com.github.walleth:khex:$khex_version"
-
-    testImplementation 'com.beust:klaxon:3.0.4'
-}

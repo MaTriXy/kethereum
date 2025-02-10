@@ -1,30 +1,27 @@
 package org.kethereum.methodsignatures
 
+import org.kethereum.abi.model.EthereumFunction
+import org.kethereum.abi.model.EthereumNamedType
 import org.kethereum.keccakshortcut.keccak
 import org.kethereum.methodsignatures.model.HexMethodSignature
 import org.kethereum.methodsignatures.model.TextMethodSignature
-import org.walleth.khex.toNoPrefixHexString
+import org.kethereum.model.Transaction
+import org.komputing.khex.extensions.toNoPrefixHexString
 
 private fun String.getHexSignature() = toByteArray().keccak().toNoPrefixHexString().substring(0, 8)
 
-// not with all synonyms the synonym is used for calculating the signature - e.g. address is not replaced
-// see https://solidity.readthedocs.io/en/develop/abi-spec.html
-private fun String.replaceParameterSynonyms() : String {
-    val parameters = this.substringAfter("(").substringBefore(")")
-    val replacedParameters = parameters.split(",").joinToString(",") {
-        when (it) {
-            "uint" -> "uint256"
-            "int" -> "int256"
-            "fixed" -> "fixed128x18"
-            "ufixed" -> "ufixed128x18"
-            else -> it
-        }
-    }
-
-    val functionName = substringBefore("(")
-    return "$functionName($replacedParameters)"
-}
-
 fun TextMethodSignature.toHexSignatureUnsafe() = HexMethodSignature(signature.getHexSignature())
 
-fun TextMethodSignature.toHexSignature() = HexMethodSignature(signature.replaceParameterSynonyms().getHexSignature())
+fun TextMethodSignature.toHexSignature() = HexMethodSignature(normalizedSignature.getHexSignature())
+
+fun Transaction.getHexSignature() = HexMethodSignature(input.slice(0..3).toNoPrefixHexString())
+
+fun List<EthereumNamedType>.toParameterList(): String = "(" + joinToString(",") {
+    if (it.type.startsWith("tuple"))
+        (it.components ?: throw IllegalArgumentException("tuple must have components")).toParameterList() + it.type.removePrefix("tuple")
+    else
+        it.type
+} + ")"
+
+fun EthereumFunction.toTextMethodSignature() = TextMethodSignature(name + inputs.toParameterList())
+fun EthereumFunction.toHexMethodSignature() = toTextMethodSignature().toHexSignature()

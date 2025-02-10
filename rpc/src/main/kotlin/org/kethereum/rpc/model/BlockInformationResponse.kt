@@ -1,3 +1,7 @@
 package org.kethereum.rpc.model
 
-data class BlockInformationResponse(val jsonrpc: String, val id: String, val result: BlockInformation)
+import com.squareup.moshi.JsonClass
+import org.kethereum.rpc.model.rpc.BlockInformationRPC
+
+@JsonClass(generateAdapter = true)
+internal data class BlockInformationResponse(val result: BlockInformationRPC) : BaseResponse()
